@@ -3,7 +3,11 @@
 #include <string.h>
 #include <sys/time.h>
 
-#define DEBUG 1
+#ifndef DEBUG
+    #define DEBUG 0
+#else
+    #define DEBUG 1
+#endif
 
 #define INIT_TIME(prev, init) \
     gettimeofday(&prev, NULL); \
@@ -100,9 +104,11 @@ int main(int argc, char **argv) {
     dim3 dimBlock(thr_block);
     dim3 dimGrid((n * m + dimBlock.x - 1) / dimBlock.x);
 
-    cudaStream_t stream;
+    cudaStream_t *streams = (cudaStream_t *)malloc(rep * sizeof(cudaStream_t));
 
-    cudaStreamCreate(&stream);
+    for (int i = 0; i < rep; i++) {
+        cudaStreamCreate(&streams[i]);
+    }
 
     if (DEBUG) {
         printf("A:\n");
@@ -113,14 +119,14 @@ int main(int argc, char **argv) {
     INIT_TIME(t_prev, t_init);
 
     for (int i = 0; i < rep; i++) {
-        factorMat<<<dimGrid, dimBlock, 0, stream>>>(A, m, n, factor[i]);
+        factorMat<<<dimGrid, dimBlock, 0, streams[i]>>>(A, m, n, factor[i]);
         /*
         cudaError_t cudaerr = cudaDeviceSynchronize();
         if (cudaerr != cudaSuccess) {
             printf("Kernel launch failed: %s\n",  cudaGetErrorString(cudaerr));
         }
         */
-        cudaMemcpyAsync(cB, A, numBytes, cudaMemcpyDeviceToHost, stream);
+        cudaMemcpyAsync(cB, A, numBytes, cudaMemcpyDeviceToHost, streams[i]);
         if (DEBUG) {
             printf("%d >>>>>>>>>>>>>>>>>>> %.2f\n", i, factor[i]);
             _printMat(cB, m, n);
@@ -132,9 +138,12 @@ int main(int argc, char **argv) {
 
     INIT_TIME(t_prev, t_init);
 
-    cudaStreamDestroy(stream);
+    for (int i = 0; i < rep; i++) {
+        cudaStreamSynchronize(streams[i]);
+        cudaStreamDestroy(streams[i]);
+    }
 
-    cudaMemcpy(cB, A, numBytes, cudaMemcpyDeviceToHost);
+    // cudaMemcpy(cB, A, numBytes, cudaMemcpyDeviceToHost);
 
     GET_TIME(t_prev, t_init, t_final, dtran_t);
 
@@ -153,11 +162,15 @@ int main(int argc, char **argv) {
     free(factor);
     free(cA);
     free(cB);
+    free(streams);
 
     // write results
     FILE *fp = fopen((argc > 6) ? argv[6] : "out.csv", "a");
-    fprintf(fp, "%d,%d,%d,%d,%f,%f,%f\n", m, n, thr_block, rep, htran_t + dtran_t, kernel_t, htran_t + dtran_t + kernel_t);
-    fclose(fp);
+    if (!fp) { printf("Error opening file\n"); }
+    else {
+        fprintf(fp, "%d,%d,%d,%d,%f,%f,%f\n", m, n, thr_block, rep, htran_t + dtran_t, kernel_t, htran_t + dtran_t + kernel_t);
+        fclose(fp);
+    }
 
     if (DEBUG) {
         printf("Host transfer time: %f\n", htran_t);
