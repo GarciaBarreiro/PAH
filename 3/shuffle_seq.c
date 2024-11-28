@@ -1,6 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifndef DEBUG
+    #define DEBUG 0
+#else
+    #define DEBUG 1
+#endif
+
 void _printMatrix(float *A, int m, int n, int p) {
     for (int i = 0; i < m; i++) {
         for (int j = 0; j < n; j++) {
@@ -65,8 +71,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    printf("STEP 1:\n");
-    _printMatrix(X, M, N, P);
+    if (DEBUG) {
+        printf("STEP 1:\n");
+        _printMatrix(X, M, N, P);
+    }
 
     float *t = malloc(M * N * P * sizeof(float));
 
@@ -85,8 +93,10 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    printf("STEP 2:\n");
-    _printMatrix(t, M, N, P);
+    if (DEBUG) {
+        printf("STEP 2:\n");
+        _printMatrix(t, M, N, P);
+    }
 
     // step 3
     for (int i = 0; i < M; i++) {
