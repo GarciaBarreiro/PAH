@@ -42,37 +42,54 @@ void _initMatrix(float *A, int m, int n, int p) {
     }
 }
 
-__global__ void kernel1(float *A, int m, int n, int p) {
+__global__ void kernel1(float *A, int n, int p) {
     extern __shared__ float s[];
-    int m_idx = blockIdx.x;
+    int b_idx = blockIdx.x;
     int t_x = threadIdx.x;
     int t_y = threadIdx.y;
 
-    s[t_x * p + t_y] = A[m_idx * n * p + t_x * p + t_y];
+    s[t_x * p + t_y] = A[b_idx * n * p + t_x * p + t_y];
 
     // STEP 1
-    float lmin = s[t_x * p + t_y];
+    float l_min = s[t_x * p + t_y];
     for (int offset = p / 2; offset > 0; offset /= 2) {
-        lmin = min(lmin, __shfl_down_sync(0xFFFFFFFF, lmin, offset, p));
+        l_min = min(l_min, __shfl_down_sync(0xFFFFFFFF, l_min, offset, p));
     }
 
     // TODO: try to use __shfl_sync instead of going through shared memory
-    // lmin = __shfl_sync(0xFFFFFFFF, lmin, 0);
-    lmin = s[t_x * p];
+    // l_min = __shfl_sync(0xFFFFFFFF, l_min, 0);
+    l_min = s[t_x * p];
 
-    s[t_x * p + t_y] += lmin;
+    s[t_x * p + t_y] += l_min;
+
+    // sync because we need to make sure all threads have updated their values
+    // before entering the next step
+    __syncthreads();
 
     // STEP 2
     if (t_x == 0) {
-        A[m_idx * n * p + t_x * p + t_y] = s[t_x * p + t_y] + s[(t_x + 1) * p + t_y];
+        A[b_idx * n * p + t_x * p + t_y] = s[t_x * p + t_y] + s[(t_x + 1) * p + t_y];
     } else if (t_x == n - 1) {
-        A[m_idx * n * p + t_x * p + t_y] = s[t_x * p + t_y] + s[(t_x - 1) * p + t_y];
+        A[b_idx * n * p + t_x * p + t_y] = s[t_x * p + t_y] + s[(t_x - 1) * p + t_y];
     } else {
-        A[m_idx * n * p + t_x * p + t_y] = s[t_x * p + t_y] + s[(t_x - 1) * p + t_y] + s[(t_x + 1) * p + t_y];
+        A[b_idx * n * p + t_x * p + t_y] = s[t_x * p + t_y] + s[(t_x - 1) * p + t_y] + s[(t_x + 1) * p + t_y];
     }
 }
 
-__global__ void kernel2() {
+__global__ void kernel2(float *A, int m, int n, int p) {
+    int m_idx = blockIdx.x;
+    int t_idx = threadIdx.x * p + threadIdx.y;
+
+    // STEP 3
+    float l_val = A[m_idx * n * p + t_idx];
+    if (m_idx == 0) {
+        l_val += A[(m_idx + 1) * n * p + t_idx];
+    } else if (m_idx == m - 1) {
+        l_val += A[(m_idx - 1) * n * p + t_idx];
+    } else {
+        l_val += A[(m_idx - 1) * n * p + t_idx] + A[(m_idx + 1) * n * p + t_idx];
+    }
+    A[m_idx * n * p + t_idx] = l_val;
 }
 
 int main(int argc, char *argv[]) {
@@ -105,7 +122,8 @@ int main(int argc, char *argv[]) {
     dim3 dimGrid(M);
     dim3 dimBlock(N, P);
     
-    kernel1<<<dimGrid, dimBlock, N * P * sizeof(float)>>>(dX, M, N, P);
+    kernel1<<<dimGrid, dimBlock, N * P * sizeof(float)>>>(dX, N, P);
+    kernel2<<<dimGrid, dimBlock>>>(dX, M, N, P);
     SYNC;
 
     cudaMemcpy(X, dX, numBytes, cudaMemcpyDeviceToHost);
