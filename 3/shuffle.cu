@@ -93,6 +93,9 @@ __global__ void kernel2(float *A, int m, int n, int p) {
 }
 
 int main(int argc, char *argv[]) {
+    struct timeval t_prev, t_init, t_final;
+    double kernel_t;
+
     if (argc < 4) {
         printf("Usage: %s M N P\n", argv[0]);
         return 1;
@@ -122,14 +125,23 @@ int main(int argc, char *argv[]) {
     dim3 dimGrid(M);
     dim3 dimBlock(N, P);
     
+    INIT_TIME(t_prev, t_init);
     kernel1<<<dimGrid, dimBlock, N * P * sizeof(float)>>>(dX, N, P);
     kernel2<<<dimGrid, dimBlock>>>(dX, M, N, P);
     SYNC;
+    GET_TIME(t_prev, t_init, t_final, kernel_t);
 
     cudaMemcpy(X, dX, numBytes, cudaMemcpyDeviceToHost);
 
     printf("OUTPUT:\n");
     _printMatrix(X, M, N, P);
+
+    cudaFree(dX);
+    free(X);
+
+    FILE *fp = fopen((argc > 4) ? argv[4] : "out.csv", "a");
+    fprintf(fp, "%d,%d,%d,%ld,%f,%d\n", M, N, P, N * P * sizeof(float), kernel_t, N * P);
+    fclose(fp);
 
     return 0;
 }
