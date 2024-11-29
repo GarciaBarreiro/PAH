@@ -77,7 +77,7 @@ __global__ void kernel1(float *A, int n, int p) {
     }
 }
 
-__global__ void kernel2(float *A, int m, int n, int p) {
+__global__ void kernel2(float *A, float *B, int m, int n, int p) {
     int m_idx = blockIdx.x;
     int t_idx = threadIdx.x * p + threadIdx.y;
 
@@ -90,7 +90,7 @@ __global__ void kernel2(float *A, int m, int n, int p) {
     } else {
         l_val += A[(m_idx - 1) * n * p + t_idx] + A[(m_idx + 1) * n * p + t_idx];
     }
-    A[m_idx * n * p + t_idx] = l_val;
+    B[m_idx * n * p + t_idx] = l_val;
 }
 
 int main(int argc, char *argv[]) {
@@ -119,25 +119,28 @@ int main(int argc, char *argv[]) {
     printf("INPUT:\n");
     _printMatrix(X, M, N, P);
 
-    float *dX;
+    float *dX, *dY;
     cudaMalloc(&dX, numBytes);
     cudaMemcpy(dX, X, numBytes, cudaMemcpyHostToDevice);
+    cudaMalloc(&dY, numBytes);
 
     dim3 dimGrid(M);
     dim3 dimBlock(N, P);
     
     INIT_TIME(t_prev, t_init);
     kernel1<<<dimGrid, dimBlock, N * P * sizeof(float)>>>(dX, N, P);
-    kernel2<<<dimGrid, dimBlock>>>(dX, M, N, P);
+    SYNC;
+    kernel2<<<dimGrid, dimBlock>>>(dX, dY, M, N, P);
     SYNC;
     GET_TIME(t_prev, t_init, t_final, kernel_t);
 
-    cudaMemcpy(X, dX, numBytes, cudaMemcpyDeviceToHost);
+    cudaMemcpy(X, dY, numBytes, cudaMemcpyDeviceToHost);
 
     printf("OUTPUT:\n");
     _printMatrix(X, M, N, P);
 
     cudaFree(dX);
+    cudaFree(dY);
     free(X);
 
     FILE *fp = fopen((argc > 4) ? argv[4] : "out.csv", "a");
