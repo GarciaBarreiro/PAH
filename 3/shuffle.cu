@@ -58,6 +58,7 @@ __global__ void kernel1(float *A, int n, int p) {
 
     // TODO: try to use __shfl_sync instead of going through shared memory
     // l_min = __shfl_sync(0xFFFFFFFF, l_min, 0);
+    __syncthreads(); // sync here else some threads read a different value from shared memory
     l_min = s[t_x * p];
 
     s[t_x * p + t_y] += l_min;
