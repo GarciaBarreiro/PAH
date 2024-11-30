@@ -77,6 +77,8 @@ __global__ void kernel1(float *A, int n, int p) {
     }
 }
 
+// use a second matrix instead of the same one for input and output,
+// this way we can avoid barriers inside the kernel
 __global__ void kernel2(float *A, float *B, int m, int n, int p) {
     int m_idx = blockIdx.x;
     int t_idx = threadIdx.x * p + threadIdx.y;

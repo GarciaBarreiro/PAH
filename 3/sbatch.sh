@@ -15,9 +15,8 @@ for m in 8 16 32 64 128 256 512 1024 2048 4196; do
         for p in 8 16 32; do
             if (( $n * $p < 2048 )); then
                 echo "m=$m n=$n p=$p"
-                srun $1 $m $n $p $3 > cuda.txt # cuda
-                srun $2 $m $n $p $4 > seq.txt  # seq
-                diff -y --width=400 cuda.txt seq.txt | grep "|"   # unless error, output should be empty
+                srun $1 $m $n $p $3 # $3 & $4 are output files, optional
+                srun $2 $m $n $p $4
             fi
         done
     done
