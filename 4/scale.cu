@@ -33,20 +33,20 @@ void _printVec(float *v, int n) {
     for (int i = 0; i < n; i++) {
         printf("%.2f ", v[i]);
     }
-    printf("\b]\n");
+    printf("\b]\n\n");
 }
 
-__global__ void factorMat(float *A, int m, int n, float factor) {
+__global__ void factorMat(float *A, float *B, int m, int n, float factor) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (i < m * n) {
-        A[i] *= factor;
+        B[i] = A[i] * factor;
     }
 }
 
 int main(int argc, char **argv) {
     struct timeval t_prev, t_init, t_final;
-    double htran_t, dtran_t, kernel_t;  // host to device, device to host, and kernel time
+    double htran_t, kernel_t;  // host to device, device to host, and kernel time
 
     if (argc < 5) {
         printf("Usage: %s <m> <n> <rep> <factors>\n", argv[0]);
@@ -82,18 +82,21 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (DEBUG) _printVec(factor, rep);
+    if (DEBUG) { _printVec(factor, rep); }
 
     unsigned int numBytes = m * n * sizeof(float);
 
     // init host
     float *cA = (float *)malloc(numBytes);  // in
     for (int i = 0; i < m * n; i++) { cA[i] = i; }
-    float *cB = (float *)malloc(numBytes);  // out
+    float *cB = (float *)malloc(rep * numBytes);  // out
+    int offset = m * n;
 
     // init device
     float *A;
     cudaMalloc(&A, numBytes);
+    float *B;
+    cudaMalloc(&B, rep * numBytes);
 
     INIT_TIME(t_prev, t_init);
 
@@ -104,11 +107,10 @@ int main(int argc, char **argv) {
     dim3 dimBlock(thr_block);
     dim3 dimGrid((n * m + dimBlock.x - 1) / dimBlock.x);
 
-    cudaStream_t *streams = (cudaStream_t *)malloc(rep * sizeof(cudaStream_t));
+    int n_streams = (rep < 8) ? rep : 8;    // default CUDA_DEVICE_MAX_CONNECTIONS value
+    cudaStream_t *streams = (cudaStream_t *)malloc(n_streams * sizeof(cudaStream_t));
 
-    for (int i = 0; i < rep; i++) {
-        cudaStreamCreate(&streams[i]);
-    }
+    for (int i = 0; i < n_streams; i++) { cudaStreamCreate(&streams[i]); }
 
     if (DEBUG) {
         printf("A:\n");
@@ -119,43 +121,22 @@ int main(int argc, char **argv) {
     INIT_TIME(t_prev, t_init);
 
     for (int i = 0; i < rep; i++) {
-        factorMat<<<dimGrid, dimBlock, 0, streams[i]>>>(A, m, n, factor[i]);
-        /*
-        cudaError_t cudaerr = cudaDeviceSynchronize();
-        if (cudaerr != cudaSuccess) {
-            printf("Kernel launch failed: %s\n",  cudaGetErrorString(cudaerr));
-        }
-        */
-        cudaMemcpyAsync(cB, A, numBytes, cudaMemcpyDeviceToHost, streams[i]);
-        if (DEBUG) {
-            printf("%d >>>>>>>>>>>>>>>>>>> %.2f\n", i, factor[i]);
-            _printMat(cB, m, n);
-            printf("\n");
-        }
+        factorMat<<<dimGrid, dimBlock, 0, streams[i % n_streams]>>>(A, &B[i * offset], m, n, factor[i]);
+        cudaMemcpyAsync(&cB[i * offset], &B[i * offset], numBytes, cudaMemcpyDeviceToHost, streams[i % n_streams]);
     }
 
-    GET_TIME(t_prev, t_init, t_final, kernel_t);
-
-    INIT_TIME(t_prev, t_init);
-
-    for (int i = 0; i < rep; i++) {
+    for (int i = 0; i < n_streams; i++) {
         cudaStreamSynchronize(streams[i]);
         cudaStreamDestroy(streams[i]);
     }
 
-    // cudaMemcpy(cB, A, numBytes, cudaMemcpyDeviceToHost);
+    GET_TIME(t_prev, t_init, t_final, kernel_t);
 
-    GET_TIME(t_prev, t_init, t_final, dtran_t);
-
-    /*
-    if (DEBUG) {
-        printf("A:\n");
-        _printMat(cA, m, n);
-
-        printf("B:\n");
-        _printMat(cB, m, n);
+    for (int i = 0; i < rep; i++) {
+        printf("%d >>>>>>>>>>>>>>>>>>> %.2f\n", i, factor[i]);
+        _printMat(&cB[i * offset], m, n);
+        printf("\n");
     }
-    */
 
     cudaFree(A);
 
@@ -168,13 +149,12 @@ int main(int argc, char **argv) {
     FILE *fp = fopen((argc > 6) ? argv[6] : "out.csv", "a");
     if (!fp) { printf("Error opening file\n"); }
     else {
-        fprintf(fp, "%d,%d,%d,%d,%f,%f,%f\n", m, n, thr_block, rep, htran_t + dtran_t, kernel_t, htran_t + dtran_t + kernel_t);
+        fprintf(fp, "%d,%d,%d,%d,%f,%f,%f\n", m, n, thr_block, rep, htran_t, kernel_t, htran_t + kernel_t);
         fclose(fp);
     }
 
     if (DEBUG) {
         printf("Host transfer time: %f\n", htran_t);
-        printf("Device transfer time: %f\n", dtran_t);
         printf("Kernel time: %f\n", kernel_t);
         printf("Total time: %f\n", htran_t + kernel_t);
     }
