@@ -45,35 +45,31 @@ void _initMatrix(float *A, int m, int n, int p) {
 __global__ void kernel1(float *A, int n, int p) {
     extern __shared__ float s[];
     int b_idx = blockIdx.x;
-    int t_x = threadIdx.x;
-    int t_y = threadIdx.y;
+    int i_p = threadIdx.x;  // iterates over p
+    int i_n = threadIdx.y;  // iterates over n (cuda stores matrices by column)
 
-    s[t_x * p + t_y] = A[b_idx * n * p + t_x * p + t_y];
+    s[i_n * p + i_p] = A[b_idx * n * p + i_n * p + i_p];
 
     // STEP 1
-    float l_min = s[t_x * p + t_y];
+    float l_min = s[i_n * p + i_p];
     for (int offset = p / 2; offset > 0; offset /= 2) {
         l_min = min(l_min, __shfl_down_sync(0xFFFFFFFF, l_min, offset, p));
     }
 
-    // TODO: try to use __shfl_sync instead of going through shared memory
-    // l_min = __shfl_sync(0xFFFFFFFF, l_min, 0);
-    __syncthreads(); // sync here else some threads read a different value from shared memory
-    l_min = s[t_x * p];
-
-    s[t_x * p + t_y] += l_min;
+    l_min = __shfl_sync(0xFFFFFFFF, l_min, 0, p);
+    s[i_n * p + i_p] += l_min;
 
     // sync because we need to make sure all threads have updated their values
     // before entering the next step
     __syncthreads();
 
     // STEP 2
-    if (t_x == 0) {
-        A[b_idx * n * p + t_x * p + t_y] = s[t_x * p + t_y] + s[(t_x + 1) * p + t_y];
-    } else if (t_x == n - 1) {
-        A[b_idx * n * p + t_x * p + t_y] = s[t_x * p + t_y] + s[(t_x - 1) * p + t_y];
+    if (i_n == 0) {
+        A[b_idx * n * p + i_n * p + i_p] = s[i_n * p + i_p] + s[(i_n + 1) * p + i_p];
+    } else if (i_n == n - 1) {
+        A[b_idx * n * p + i_n * p + i_p] = s[i_n * p + i_p] + s[(i_n - 1) * p + i_p];
     } else {
-        A[b_idx * n * p + t_x * p + t_y] = s[t_x * p + t_y] + s[(t_x - 1) * p + t_y] + s[(t_x + 1) * p + t_y];
+        A[b_idx * n * p + i_n * p + i_p] = s[i_n * p + i_p] + s[(i_n - 1) * p + i_p] + s[(i_n + 1) * p + i_p];
     }
 }
 
@@ -81,7 +77,7 @@ __global__ void kernel1(float *A, int n, int p) {
 // this way we can avoid barriers inside the kernel
 __global__ void kernel2(float *A, float *B, int m, int n, int p) {
     int m_idx = blockIdx.x;
-    int t_idx = threadIdx.x * p + threadIdx.y;
+    int t_idx = threadIdx.y * p + threadIdx.x;
 
     // STEP 3
     float l_val = A[m_idx * n * p + t_idx];
@@ -127,7 +123,7 @@ int main(int argc, char *argv[]) {
     cudaMalloc(&dY, numBytes);
 
     dim3 dimGrid(M);
-    dim3 dimBlock(N, P);
+    dim3 dimBlock(P, N);
     
     INIT_TIME(t_prev, t_init);
     kernel1<<<dimGrid, dimBlock, N * P * sizeof(float)>>>(dX, N, P);
